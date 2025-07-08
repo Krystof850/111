@@ -1,5 +1,5 @@
 """
-OpenAI Whisper FastAPI Backend - Railway with Real Whisper
+OpenAI Whisper FastAPI Backend - Railway Fixed
 """
 
 import os
@@ -8,7 +8,6 @@ import logging
 from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 import uvicorn
 
 # Configure logging
@@ -50,11 +49,7 @@ def read_root():
         "version": "1.0.0",
         "environment": "Railway",
         "status": "running",
-        "whisper_loaded": whisper_model is not None,
-        "endpoints": {
-            "health": "/health",
-            "transcribe": "/transcribe (POST)"
-        }
+        "whisper_loaded": whisper_model is not None
     }
 
 @app.get("/health")
@@ -64,66 +59,68 @@ def health_check():
         "status": "healthy",
         "service": "whisper-api",
         "environment": "Railway",
-        "whisper_model": "loaded" if whisper_model is not None else "loading..."
+        "whisper_model": "loaded" if whisper_model is not None else "loading...",
+        "ready_for_transcription": whisper_model is not None
     }
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    """
-    Transcribe audio file to text using OpenAI Whisper
-    """
-    global whisper_model
+    """Transcribe audio file to text using OpenAI Whisper"""
+    if whisper_model is None:
+        raise HTTPException(status_code=503, detail="Whisper model not loaded")
     
-    # Check file type
-    allowed_types = ['.m4a', '.mp3', '.wav', '.webm', '.mp4']
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    
+    # Check file extension
+    allowed_extensions = {'.m4a', '.mp3', '.wav', '.webm', '.mp4'}
     file_extension = Path(file.filename).suffix.lower()
     
-    if file_extension not in allowed_types:
+    if file_extension not in allowed_extensions:
         raise HTTPException(
-            status_code=400, 
-            detail=f"Unsupported file type: {file_extension}. Supported: {allowed_types}"
+            status_code=400,
+            detail=f"Unsupported file format: {file_extension}"
         )
     
-    if whisper_model is None:
-        raise HTTPException(
-            status_code=503, 
-            detail="Whisper model is still loading. Please try again in a moment."
-        )
-    
-    # Process with OpenAI Whisper
     try:
         content = await file.read()
         file_size = len(content)
         
-        logger.info(f"Transcribing audio: {file.filename}, size: {file_size} bytes")
+        # File size limit (25MB)
+        if file_size > 25 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large")
         
-        # Save uploaded file temporarily
+        logger.info(f"Processing audio: {file.filename}")
+        
+        # Create temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
             tmp_file.write(content)
-            tmp_file.flush()
-            
-            # Transcribe with Whisper
-            result = whisper_model.transcribe(tmp_file.name)
-            transcript = result["text"].strip()
-            
-            # Clean up temp file
-            os.unlink(tmp_file.name)
-            
-            logger.info(f"Transcription successful: '{transcript[:50]}...' ({len(transcript)} chars)")
-            
-            return JSONResponse(content={
-                "transcript": transcript,
-                "filename": file.filename,
-                "file_size": file_size,
-                "language": result.get("language", "unknown"),
-                "status": "success",
-                "source": "OpenAI Whisper"
-            })
-            
+            tmp_file_path = tmp_file.name
+        
+        # Transcribe using Whisper
+        result = whisper_model.transcribe(tmp_file_path)
+        
+        # Clean up
+        os.unlink(tmp_file_path)
+        
+        transcript = result["text"].strip()
+        
+        return {
+            "transcript": transcript,
+            "success": True,
+            "file_size": file_size
+        }
+        
     except Exception as e:
-        logger.error(f"Transcription failed: {e}")
+        if 'tmp_file_path' in locals():
+            try:
+                os.unlink(tmp_file_path)
+            except:
+                pass
+        
+        logger.error(f"Transcription failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
