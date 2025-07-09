@@ -90,7 +90,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
             tmp_file.write(content)
             tmp_file_path = tmp_file.name
         
-        # Transcribe
+        # Transcribe with Czech language
         result = whisper_model.transcribe(tmp_file_path, language="cs")
         
         # Clean up
