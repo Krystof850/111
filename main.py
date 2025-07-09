@@ -1,24 +1,30 @@
 """
-OpenAI Whisper + GPT-4o-mini FastAPI Backend - Railway Production Ready
+Modular FastAPI Application - Railway Production Ready
+Skutečně modulární design s izolovanými službami
 """
 
 import os
-import tempfile
-import traceback
-from datetime import datetime
-from typing import Optional
-
-import openai
-import whisper
+import logging
+from typing import Optional, List
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import uvicorn
 
-# the newest OpenAI model is "gpt-4o-mini" which was released after knowledge cutoff
-# do not change this unless explicitly requested by the user
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+# Import izolovaných služeb
+from services.whisper_service import whisper_service
+from services.openai_service import openai_service
+from services.health_service import health_service
 
-app = FastAPI(title="Whisper + GPT-4o-mini API")
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="Modular Speech-to-Text + Chat API",
+    description="Skutečně modulární API s izolovanými službami",
+    version="4.0.0"
+)
 
 # CORS middleware
 app.add_middleware(
@@ -29,136 +35,97 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variables
-whisper_model = None
-openai_client = None
-
+# Pydantic models
 class ChatRequest(BaseModel):
     message: str
-    goals: Optional[list] = []
+    goals: Optional[List[str]] = []
 
 @app.on_event("startup")
 async def startup_event():
-    """Load Whisper model and OpenAI client on startup"""
-    global whisper_model, openai_client
+    """Načte všechny služby při startu"""
+    logger.info("🚀 Starting modular application...")
     
-    try:
-        # Load Whisper model
-        whisper_model = whisper.load_model("tiny")
-        print("✅ Whisper model loaded successfully")
-        
-        # Initialize OpenAI client
-        if os.environ.get("OPENAI_API_KEY"):
-            openai_client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-            print("✅ OpenAI client initialized successfully")
-        else:
-            print("⚠️ OpenAI API key not found")
-            
-    except Exception as e:
-        print(f"❌ Startup error: {e}")
-        traceback.print_exc()
+    # Načíst Whisper službu
+    whisper_service.load_model("tiny")
+    
+    # Načíst OpenAI službu
+    openai_service.load_client()
+    
+    logger.info("✅ All services initialized")
 
 @app.get("/")
 async def root():
     """Root endpoint"""
     return {
-        "message": "Whisper + GPT-4o-mini API",
+        "message": "Modular Speech-to-Text + Chat API",
+        "version": "4.0.0",
         "status": "running",
-        "timestamp": datetime.now().isoformat()
+        "architecture": "modular",
+        "services": {
+            "whisper": whisper_service.get_status(),
+            "openai": openai_service.get_status()
+        }
     }
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "whisper": whisper_model is not None,
-        "openai": openai_client is not None,
-        "timestamp": datetime.now().isoformat()
+    """Health check endpoint - agreguje stav všech služeb"""
+    services = {
+        "whisper": whisper_service.get_status(),
+        "openai": openai_service.get_status()
     }
+    
+    return health_service.get_status(services)
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    """Transcribe audio file using OpenAI Whisper"""
-    if not whisper_model:
-        raise HTTPException(status_code=500, detail="Whisper model not loaded")
-    
+    """
+    Speech-to-text endpoint - používá izolovanou Whisper službu
+    """
     try:
-        # Save uploaded file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".m4a") as tmp_file:
-            content = await file.read()
-            tmp_file.write(content)
-            tmp_file_path = tmp_file.name
+        # Kontrola souboru
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file uploaded")
         
-        # Transcribe with Czech language
-        result = whisper_model.transcribe(tmp_file_path, language="cs")
+        # Přečíst obsah souboru
+        content = await file.read()
         
-        # Clean up
-        os.unlink(tmp_file_path)
+        # Delegovat na Whisper službu
+        result = whisper_service.transcribe(content, file.filename, language="cs")
         
-        return {
-            "transcription": result["text"],
-            "language": result.get("language", "cs"),
-            "timestamp": datetime.now().isoformat()
-        }
+        logger.info(f"✅ Transcription completed: {file.filename}")
+        return result
         
     except Exception as e:
-        print(f"Transcription error: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        logger.error(f"❌ Transcription error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
-    """Chat using OpenAI GPT-4o-mini"""
-    if not openai_client:
-        # Fallback response if OpenAI not available
-        return {
-            "response": "OpenAI není dostupný. Nastavte OPENAI_API_KEY v Railway environment.",
-            "timestamp": datetime.now().isoformat(),
-            "model": "fallback",
-            "tokens_used": 0,
-            "source": "fallback"
-        }
-    
+async def chat_endpoint(request: ChatRequest):
+    """
+    Chat endpoint - používá izolovanou OpenAI službu
+    """
     try:
-        # Create chat completion with GPT-4o-mini
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Jsi užitečný AI asistent. Odpovídej v češtině a buď přátelský a nápomocný."
-                },
-                {
-                    "role": "user", 
-                    "content": request.message
-                }
-            ],
-            max_tokens=500,
-            temperature=0.7
-        )
+        # Delegovat na OpenAI službu
+        result = openai_service.chat(request.message, request.goals)
         
-        return {
-            "response": response.choices[0].message.content,
-            "timestamp": datetime.now().isoformat(),
-            "model": "gpt-4o-mini",
-            "tokens_used": response.usage.total_tokens,
-            "source": "openai"
-        }
+        logger.info(f"✅ Chat completed: {request.message[:50]}...")
+        return result
         
     except Exception as e:
-        print(f"Chat error: {e}")
-        traceback.print_exc()
-        
-        # Fallback response on error
-        return {
-            "response": f"Omlouváme se, došlo k chybě při komunikaci s OpenAI: {str(e)}",
-            "timestamp": datetime.now().isoformat(),
-            "model": "error",
-            "tokens_used": 0,
-            "source": "error"
-        }
+        logger.error(f"❌ Chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/services/status")
+async def services_status():
+    """Endpoint pro monitoring jednotlivých služeb"""
+    return {
+        "whisper": whisper_service.get_status(),
+        "openai": openai_service.get_status(),
+        "health": health_service.get_service_health("health", True)
+    }
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    port = int(os.environ.get("PORT", 8000))
+    logger.info(f"🚀 Starting modular API on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
