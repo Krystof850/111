@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="OpenAI Whisper API",
     description="Speech-to-text API using OpenAI Whisper",
-    version="2.0.0"
+    version="3.0.0"
 )
 
 # CORS middleware
@@ -46,16 +46,20 @@ async def startup_event():
         whisper_model = None
 
 @app.get("/")
-def read_root():
+async def root():
     """Root endpoint"""
     return {
         "message": "OpenAI Whisper API - Railway Production",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "status": "running",
         "environment": "Railway",
         "whisper_loaded": whisper_model is not None,
         "model_type": "base",
-        "supported_formats": [".m4a", ".mp3", ".wav", ".webm", ".mp4"]
+        "endpoints": {
+            "health": "/health",
+            "transcribe": "/transcribe",
+            "docs": "/docs"
+        }
     }
 
 @app.get("/health")
@@ -64,7 +68,7 @@ async def health_check():
     return {
         "status": "healthy" if whisper_model else "loading",
         "service": "whisper-api",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "environment": "Railway",
         "whisper_model": "loaded" if whisper_model else "loading...",
         "ready_for_transcription": whisper_model is not None
@@ -72,13 +76,11 @@ async def health_check():
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    """
-    Transcribe audio file to text using OpenAI Whisper
-    """
+    """Transcribe audio file using OpenAI Whisper"""
     if whisper_model is None:
         raise HTTPException(
             status_code=503, 
-            detail="Whisper model not loaded yet - please wait"
+            detail="Whisper model not loaded yet - please wait and try again"
         )
     
     if not file.filename:
@@ -143,6 +145,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         )
 
 if __name__ == "__main__":
+    # Railway poskytuje PORT environment variable
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Whisper API on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
