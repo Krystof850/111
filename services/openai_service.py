@@ -17,6 +17,8 @@ class OpenAIService:
         self.client = None
         self.model = "gpt-4o-mini"
         self.is_loaded = False
+        # Automaticky načíst client při inicializaci
+        self.load_client()
         
     def load_client(self) -> bool:
         """Načte OpenAI client"""
