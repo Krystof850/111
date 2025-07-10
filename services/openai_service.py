@@ -28,8 +28,12 @@ class OpenAIService:
             # Získat API klíč
             api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key:
-                logger.error("❌ OpenAI API key not found")
+                logger.error("❌ OpenAI API key not found in environment")
+                logger.error(f"Available env vars: {list(os.environ.keys())}")
                 return False
+            
+            # Debugging - logovat první 10 znaků API klíče
+            logger.info(f"🔑 OpenAI API key found: {api_key[:10]}...")
             
             self.client = openai.OpenAI(api_key=api_key)
             self.is_loaded = True
