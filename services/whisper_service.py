@@ -17,21 +17,20 @@ class WhisperService:
     
     def __init__(self):
         self.model = None
-        self.model_type = "tiny"
+        self.model_type = "api"
         self.is_loaded = False
         
-    def load_model(self, model_type: str = "tiny") -> bool:
-        """Načte Whisper model"""
+    def load_model(self, model_type: str = "api") -> bool:
+        """Načte Whisper model - používá OpenAI API pro úsporu paměti"""
         try:
-            import whisper
-            logger.info(f"Loading Whisper model: {model_type}")
-            self.model = whisper.load_model(model_type)
-            self.model_type = model_type
+            # Nepoužívat lokální model - používat OpenAI API
+            self.model = "openai-api"
+            self.model_type = "api"
             self.is_loaded = True
-            logger.info(f"✅ Whisper model {model_type} loaded successfully")
+            logger.info(f"✅ Whisper service ready - using OpenAI API")
             return True
         except Exception as e:
-            logger.error(f"❌ Failed to load Whisper model: {e}")
+            logger.error(f"❌ Failed to initialize Whisper service: {e}")
             self.is_loaded = False
             return False
     
@@ -40,14 +39,15 @@ class WhisperService:
         return {
             "service": "whisper",
             "loaded": self.is_loaded,
-            "model_type": self.model_type if self.is_loaded else None,
-            "ready": self.is_loaded
+            "model_type": "openai-api" if self.is_loaded else None,
+            "ready": self.is_loaded,
+            "memory_optimized": True
         }
     
     def transcribe(self, file_content: bytes, filename: str, language: str = "cs") -> Dict[str, Any]:
-        """Transkribuje audio soubor"""
+        """Transkribuje audio soubor pomocí OpenAI API"""
         if not self.is_loaded:
-            raise Exception("Whisper model not loaded")
+            raise Exception("Whisper service not ready")
         
         # Kontrola file extension
         allowed_extensions = {'.m4a', '.mp3', '.wav', '.webm', '.mp4'}
@@ -61,26 +61,43 @@ class WhisperService:
             raise Exception("File too large. Maximum size: 25MB")
         
         try:
+            # Použít OpenAI API místo lokálního modelu
+            import openai
+            
+            # Získat API klíč
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                raise Exception("OpenAI API key not configured")
+            
+            client = openai.OpenAI(api_key=api_key)
+            
             # Vytvořit dočasný soubor
             with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
                 tmp_file.write(file_content)
                 tmp_file_path = tmp_file.name
             
             try:
-                # Transkribovat pomocí Whisper
-                result = self.model.transcribe(tmp_file_path, language=language)
-                transcript = result["text"].strip()
+                # Transkribovat pomocí OpenAI API
+                with open(tmp_file_path, "rb") as audio_file:
+                    response = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        language=language if language != "cs" else "czech"
+                    )
                 
-                logger.info(f"✅ Transcription successful: {len(transcript)} characters")
+                transcript = response.text.strip()
+                
+                logger.info(f"✅ OpenAI API transcription successful: {len(transcript)} characters")
                 
                 return {
                     "transcript": transcript,
                     "transcription": transcript,  # Backward compatibility
                     "text": transcript,          # Alternative format
-                    "language": result.get("language", language),
-                    "duration": result.get("duration", 0),
+                    "language": language,
+                    "duration": 0,  # OpenAI API doesn't provide duration
                     "file_size": len(file_content),
-                    "success": True
+                    "success": True,
+                    "source": "openai-api"
                 }
                 
             finally:
@@ -91,7 +108,7 @@ class WhisperService:
                     pass
                     
         except Exception as e:
-            logger.error(f"❌ Transcription failed: {str(e)}")
+            logger.error(f"❌ OpenAI API transcription failed: {str(e)}")
             raise Exception(f"Transcription failed: {str(e)}")
 
 # Singleton instance

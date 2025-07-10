@@ -45,8 +45,8 @@ async def startup_event():
     """Načte všechny služby při startu"""
     logger.info("🚀 Starting modular application...")
     
-    # Načíst Whisper službu
-    whisper_service.load_model("tiny")
+    # Načíst Whisper službu (OpenAI API)
+    whisper_service.load_model("api")
     
     # Načíst OpenAI službu
     openai_service.load_client()
@@ -109,23 +109,25 @@ async def chat_endpoint(request: ChatRequest):
         # Delegovat na OpenAI službu
         result = openai_service.chat(request.message, request.goals)
         
-        logger.info(f"✅ Chat completed: {request.message[:50]}...")
+        logger.info(f"✅ Chat completed: {len(request.message)} characters")
         return result
         
     except Exception as e:
         logger.error(f"❌ Chat error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/services/status")
+@app.get("/services")
 async def services_status():
     """Endpoint pro monitoring jednotlivých služeb"""
     return {
         "whisper": whisper_service.get_status(),
         "openai": openai_service.get_status(),
-        "health": health_service.get_service_health("health", True)
+        "health": health_service.get_status({
+            "whisper": whisper_service.get_status(),
+            "openai": openai_service.get_status()
+        })
     }
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    logger.info(f"🚀 Starting modular API on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=port)
